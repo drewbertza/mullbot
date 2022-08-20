@@ -35,3 +35,5 @@ I made script to learn bash, git, and awk, and to get to grips with using OpenWr
 
 I figured this would be a good way to learn, and make something that I'd find useful. Maybe you will too.
 While I've tried to test it, it isn't guaranteed to work.
+
+-- [Drewbert](https://www.drewbert.co.za/mullbot/)
