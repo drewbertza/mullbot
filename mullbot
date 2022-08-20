@@ -484,7 +484,7 @@ fi
 pushfiletorouter "/configs/dhcp.${FILETOPUSH}" "/etc/config/dhcp"
 pushfiletorouter "/configs/firewall.${FILETOPUSH}" "/etc/config/firewall"
 pushfiletorouter "/configs/network.${FILETOPUSH}" "/etc/config/network"
-pushfiletorouter "/configs/crontab.${ILETOPUSH}" "/root/mycrontabfile"
+pushfiletorouter "/configs/crontab.${FILETOPUSH}" "/root/mycrontabfile"
 sendcommandtorouter "/usr/bin/crontab /root/mycrontabfile && /etc/init.d/cron restart"
 openwrtreboot nowait
 reconnecttorouter
