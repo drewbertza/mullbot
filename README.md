@@ -1,4 +1,4 @@
-# mullbot
+# Mullbot
 Mullbot is an interactive bash script for setting up and controlling a Mullvad VPN connection on an OpenWrt router running [Dropbear](https://matt.ucc.asn.au/dropbear/dropbear.html).
 
 Mullbot requires [jq](https://stedolan.github.io/jq/), [OpenSSH](https://www.openssh.com/), and [GNU coreutils](https://www.gnu.org/software/coreutils/), and was developed and tested, [GNU bash](https://www.gnu.org/software/bash/) 5.1.16, and [OpenWrt](https://openwrt.org/) 21.02.3.
