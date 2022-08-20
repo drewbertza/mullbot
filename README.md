@@ -1,7 +1,7 @@
 # Mullbot
 Mullbot is an interactive bash script for setting up and controlling a Mullvad VPN connection on an OpenWrt router running [Dropbear](https://matt.ucc.asn.au/dropbear/dropbear.html).
 
-Mullbot requires [jq](https://stedolan.github.io/jq/), [OpenSSH](https://www.openssh.com/), and [GNU coreutils](https://www.gnu.org/software/coreutils/), and was developed and tested, [GNU bash](https://www.gnu.org/software/bash/) 5.1.16, and [OpenWrt](https://openwrt.org/) 21.02.3.
+Mullbot requires [jq](https://stedolan.github.io/jq/), [OpenSSH](https://www.openssh.com/), and [GNU coreutils](https://www.gnu.org/software/coreutils/), and was developed and tested with [GNU bash](https://www.gnu.org/software/bash/) 5.1.16, and [OpenWrt](https://openwrt.org/) 21.02.3.
 
 ## Control your Mullvad connection
 Mullbot incorporates a set of functions for controlling a [Wireguard](https://www.wireguard.com/) connection to [Mullvad VPN](https://mullvad.net/), and can quickly create a Wireguard connection according to [Mullvad's instructions](https://mullvad.net/en/help/running-wireguard-router/). It also enables quick switching between servers.
