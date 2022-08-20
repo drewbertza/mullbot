@@ -215,14 +215,13 @@ if [[ $IFCONNECTED -eq 1 ]]; then
     let "MULLVADSTATUSSPACE = ( 63 - $MULLVADSTATUSLEN ) / 2"
     MULLVADSTATUSSPACE="$(printf "%${MULLVADSTATUSSPACE}s")"
     echo "$MULLVADSTATUSSPACE""$MULLVADSTATUS""$MULLVADSTATUSSPACE"
-    else
-    echo "$MULLVADSTATUS"
+    echo '###############################################################'
 fi
-echo '###############################################################'
 }
 
 mullvadstatusscreen() {
-MULLVADCHECK="$(curl -s https://am.i.mullvad.net/connected |& grep -c 'You are connected' -)"
+MULLVADSTATUS="$(curl -s https://am.i.mullvad.net/connected)"
+MULLVADCHECK="$(echo "$MULLVADSTATUS" |& grep -c 'You are connected' -)"
 if [[ $MULLVADCHECK == 1 ]]; then
     MULLVADIP="$(curl -s https://am.i.mullvad.net/ip)"
     MULLVADCITY="$(curl -s https://am.i.mullvad.net/city)"
@@ -236,8 +235,10 @@ if [[ $MULLVADCHECK == 1 ]]; then
     let "REQUIREDMULLSPACE2 = 63 - $MULLVADCITYLEN - $MULLVADCOUNTRYLEN - 43"
     DYNAMICMULLSPACE2="$(printf "%${REQUIREDMULLSPACE2}s")"
     echo "Location: $MULLVADCITY, $MULLVADCOUNTRY $DYNAMICMULLSPACE2 https://mullvad.net/en/check/"
-    echo '###############################################################'
+    else
+    echo "$MULLVADSTATUS"
 fi
+echo '###############################################################'
 }
 
 mullbotwarning () {
