@@ -1,0 +1,1123 @@
+#!/bin/bash
+#
+#  Mullbot
+#  https://www.drewbert.co.za/mullbot
+#
+#All files will be saved in ~/.mullbot
+#
+if [[ $EUID -eq 0 ]]; then
+    echo "This script must NOT be run as root" 1>&2
+    sleep 1
+    exit 1
+fi 
+WHEREISMULLBOT=$(readlink -f "$0")
+export WHEREISMULLBOT
+
+#functions called at first run
+welcometomullbot () {
+cat << 'EOF'
+
+Welcome to Mullbot, a simple script for managing your OpenWRT router. 
+
+Mullbot requires GNU coreutils, OpenSSH, and jq, and has been tested 
+
+and developed with bash 5.1.16, and OpenWrt 21.02.3.
+
+EOF
+read -n 1 -r -s -p $"Press any key to continue"
+clear
+}
+#~/.mullbot/routersshconfig contains only router IP and SSH port
+writeroutersshconfig () {
+source "${HOME}/.mullbot/routersshconfig"
+if [[ "$1" == "ip" ]]; then
+    echo "OPENWRTROUTERIP=$2" > "${HOME}/.mullbot/routersshconfig"
+    else
+    echo "OPENWRTROUTERIP=$OPENWRTROUTERIP" > "${HOME}/.mullbot/routersshconfig"
+fi
+if [[ "$1" == "port" ]]; then
+    echo "OPENWRTROUTERPORT=$2" >> "${HOME}/.mullbot/routersshconfig"
+    else
+    echo "OPENWRTROUTERPORT=$OPENWRTROUTERPORT" >> "${HOME}/.mullbot/routersshconfig"
+fi
+}
+
+makeroutersshconfig () {
+clear
+echo "What is the IP of your openWRT router?"
+echo ""
+read OPENWRTROUTERIP
+clear
+echo "What port do you want to connect to? (Default is 22)"
+echo ""
+read OPENWRTROUTERPORT
+[ "$OPENWRTROUTERPORT" == "" ] && OPENWRTROUTERPORT="22"
+writeroutersshconfig ip "$OPENWRTROUTERIP"
+writeroutersshconfig port "$OPENWRTROUTERPORT"
+}
+
+getbackup () {
+clear
+echo 'Getting backup of router configuration...'
+source "${HOME}/.mullbot/routersshconfig"
+ssh -p "$OPENWRTROUTERPORT" "root@${OPENWRTROUTERIP}" '-- sysupgrade -b -' > "${HOME}/openwrt-backup-$(date +"%Y-%m-%d--%H-%M-%S").tgz"
+echo "Backup saved to your home directry."
+clear
+}
+#called again later to rewrite config file.
+writemullbotconfig () {
+touch "${HOME}/.mullbot/mullbotconfig"
+source "${HOME}/.mullbot/mullbotconfig"
+if [[ "$1" == "includestatus" ]]; then
+    echo "INCLUDESTATUS=$2" > "${HOME}/.mullbot/mullbotconfig"
+    else
+    echo "INCLUDESTATUS=$INCLUDESTATUS" > "${HOME}/.mullbot/mullbotconfig"
+fi
+if [[ "$1" == "autostartluci" ]]; then
+    echo "AUTOSTARTLUCI=$2" >> "${HOME}/.mullbot/mullbotconfig"
+    else
+    echo "AUTOSTARTLUCI=$AUTOSTARTLUCI" >> "${HOME}/.mullbot/mullbotconfig"
+fi
+if [[ "$1" == "autokillluci" ]]; then
+    echo "AUTOKILLLUCI=$2" >> "${HOME}/.mullbot/mullbotconfig"
+    else
+    echo "AUTOKILLLUCI=$AUTOKILLLUCI" >> "${HOME}/.mullbot/mullbotconfig"
+fi
+if [[ "$1" == "trapluci" ]]; then
+    echo "EXITTRAP=$2" >> "${HOME}/.mullbot/mullbotconfig"
+    else
+    echo "EXITTRAP=$EXITTRAP" >> "${HOME}/.mullbot/mullbotconfig"
+fi
+if [[ "$1" == "warningshown" ]]; then
+    echo "WARNINGSHOWN=$2" >> "${HOME}/.mullbot/mullbotconfig"
+    else
+    echo "WARNINGSHOWN=$WARNINGSHOWN" >> "${HOME}/.mullbot/mullbotconfig"
+fi
+}
+
+makebasicmullbotconfig () {
+clear
+echo "You can include a Mullvad status indicator on the main screen to check your VPN connection at a glance. This might slow down performance very slightly. You can change your choice in config later."
+read -r -p "Do you want to include Mullvad status indicator? [y/N] " RESPONSE
+case "$RESPONSE" in
+    [yY]* )
+        writemullbotconfig includestatus yes
+        ;;
+    *)
+        writemullbotconfig includestatus no
+        ;;
+esac
+}
+
+restartmullbot () {
+x-terminal-emulator -e bash "$WHEREISMULLBOT"
+exit
+}
+
+#basic router functions
+sshconnecttorouter () {
+source "${HOME}/.mullbot/routersshconfig"
+ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP"
+}
+
+sendcommandtorouter () {
+echo "Working..."
+source "${HOME}/.mullbot/routersshconfig"
+ssh -p "$OPENWRTROUTERPORT" "root@$OPENWRTROUTERIP" "$1 & exit" > /dev/null
+}
+
+fetchfilefromrouter () {
+echo "Working..."
+source "${HOME}/.mullbot/routersshconfig"
+scp -C -P "$OPENWRTROUTERPORT" "root@$OPENWRTROUTERIP:$1" "${HOME}/.mullbot/$2"
+}
+
+pushfiletorouter () {
+clear
+echo "Working..."
+source "${HOME}/.mullbot/routersshconfig"
+scp -C -P "$OPENWRTROUTERPORT" "${HOME}/.mullbot/$1" "root@$OPENWRTROUTERIP:$2"
+sleep 1
+}
+
+checkportstatus () {
+source "${HOME}/.mullbot/routersshconfig"
+if [[ "$1" == "default" ]]; then
+CHECKPORT="$OPENWRTROUTERPORT"
+else
+CHECKPORT="$1"
+fi
+nc -vz "$OPENWRTROUTERIP" "$CHECKPORT" 2>&1 |& grep -c 'succeeded' -
+}
+
+#args: quick skips countdown; nowait returns without waiting for the router to come back up
+openwrtreboot () {
+clear
+if [[ "$1" != "quick" ]] || [[ "$2" != "quick" ]]; then
+    sec=5
+    while [ $sec -ge 0 ]; do
+        echo -ne "Rebooting in $sec\033[0K\r"
+        let "sec=sec-1"
+        sleep 1
+    done
+    clear
+fi
+sendcommandtorouter 'reboot'
+if [[ "$1" != "nowait" ]] || [[ "$2" != "nowait" ]]; then
+    sleep 3
+    ROUTERSTATUS=0
+    while [[ "$ROUTERSTATUS" == 0 ]]; do
+        ROUTERSTATUS="$(checkportstatus default)"
+        sleep 1
+    done
+    echo "And we're back"
+    sleep 1
+    clear
+fi
+}
+
+reconnecttorouter () {
+MYCONNAME=$(nmcli -t con show --active | awk -F ':' '{print $2}')
+nmcli con down uuid "$MYCONNAME" > /dev/null
+sleep 10
+nmcli con up uuid "$MYCONNAME" > /dev/null
+}
+
+changerouterip () {
+NEWROUTERIP="'$1'"
+UCIIPCOMMAND="uci set network.lan.ipaddr=$NEWROUTERIP && uci commit network && /etc/init.d/network restart & exit"
+sendcommandtorouter "$UCIIPCOMMAND" && writeroutersshconfig ip "$NEWROUTERIP"
+openwrtreboot nowait
+reconnecttorouter
+}
+
+mullbotsplash () {
+cat << MULLBOTSPLASH
+   ############################################################
+ #                                                            #
+#                           #    #    #                       #
+#    ## ### ###             #    #    #                #      #
+#     ##  ##  #             #    #    #                #      #
+#     #   #   #    #    #   #    #    # #####   #####  ###    #
+#     #   #   #    #    #   #    #    ##    #  #    #  #      #
+#     #   #   #    #   ##   #    #    #     #  #    #  #   #  #
+#     #   #   ##   #### ##   #    #   # ####   #####   ####   #
+#                                                             #
+#                                                  Wireguard #
+############################################################
+MULLBOTSPLASH
+#checks connection status via Mullvad API and prints it in a nice justified way that won't trigger OCD
+MULLVADSTATUS="$(curl -s https://am.i.mullvad.net/connected)"
+IFCONNECTED="$(echo "$MULLVADSTATUS" | grep -c 'You are connected' -)"
+if [[ $IFCONNECTED -eq 1 ]]; then
+    MULLVADSTATUS="$(echo "$MULLVADSTATUS" | sed -e 's/Your IP .*//' -)"
+fi
+MULLVADSTATUSLEN="$(echo ${#MULLVADSTATUS})"
+let "MULLVADSTATUSSPACE = ( 63 - $MULLVADSTATUSLEN ) / 2"
+MULLVADSTATUSSPACE="$(printf "%${MULLVADSTATUSSPACE}s")"
+echo "$MULLVADSTATUSSPACE""$MULLVADSTATUS""$MULLVADSTATUSSPACE"
+echo '###############################################################'
+}
+
+mullvadstatusscreen() {
+MULLVADCHECK="$(curl -s https://am.i.mullvad.net/connected |& grep -c 'You are connected' -)"
+if [[ $MULLVADCHECK == 1 ]]; then
+    MULLVADIP="$(curl -s https://am.i.mullvad.net/ip)"
+    MULLVADCITY="$(curl -s https://am.i.mullvad.net/city)"
+    MULLVADCOUNTRY="$(curl -s https://am.i.mullvad.net/country)"
+    MULLVADIPLEN="$(echo ${#MULLVADIP})"
+    let "REQUIREDMULLSPACE1 = 63 - $MULLVADIPLEN - 26"
+    DYNAMICMULLSPACE1="$(printf "%${REQUIREDMULLSPACE1}s")"
+    echo "Mullvd is CONNECTED. $DYNAMICMULLSPACE1 IP: $MULLVADIP"
+    MULLVADCITYLEN="$(echo ${#MULLVADCITY})"
+    MULLVADCOUNTRYLEN="$(echo ${#MULLVADCOUNTRY})"
+    let "REQUIREDMULLSPACE2 = 63 - $MULLVADCITYLEN - $MULLVADCOUNTRYLEN - 43"
+    DYNAMICMULLSPACE2="$(printf "%${REQUIREDMULLSPACE2}s")"
+    echo "Location: $MULLVADCITY, $MULLVADCOUNTRY $DYNAMICMULLSPACE2 https://mullvad.net/en/check/"
+    else
+    echo "Not connected to Mullvad"
+fi
+echo '###############################################################'
+}
+
+mullbotwarning () {
+clear
+cat << 'EOF'
+Mullbot requires curl and wireguard to be installed on your router.
+If they have not been installed, Mullbot will install them for you.
+
+Please note that your router may need to be rebooted after certain 
+changes are made. 
+
+If a rebbot is required, you will be prompted first and can exit 
+the script if you'd prefer not to reboot.
+
+However, config changes will only take effect after rebooting.
+EOF
+read -n 1 -r -s -p $"Press any key to continue... "
+writemullbotconfig warningshown yes
+}
+
+#awk scripts for config file manipulation
+makeawkscripts () {
+cat << 'EOF' > "${HOME}/.mullbot/awkscripts/changenetwork.awk"
+#!/usr/bin/env awk
+
+{DEFAULT = 1}
+
+/^[[:alpha:]]+/ {
+    if ($0 == "config interface \'wan\'") {
+        flag = 1
+    }
+    else if (flag == 1) {
+        print "\toption device \'wan\'"
+	    print "\toption proto \'dhcp\'"
+	    print "\toption peerdns \'0\'"
+	    print "\tlist dns \'193.138.218.74\'"
+        flag = 0
+    }
+    else {
+        flag = 0
+    }
+    print $0
+    DEFAULT = 0
+}
+
+DEFAULT {
+    if (flag == 0) {
+        print $0
+    }
+}
+
+EOF
+cat << 'EOF' > "${HOME}/.mullbot/awkscripts/changemasq.awk"
+#!/usr/bin/env awk
+
+{DEFAULT = 1}
+
+/^[[:alpha:]]+/ {
+    if ($0 == "config dnsmasq") {
+        flag = 1
+    }
+    else if (flag == 1) {
+        print "\tlist server \'10.64.0.1\'"
+        flag = 0
+    }
+    else {
+        flag = 0
+    }
+    print $0
+    DEFAULT = 0
+}
+
+DEFAULT {
+    if (flag == 0) {
+        print $0
+    }
+}
+
+EOF
+cat << 'EOF' > "${HOME}/.mullbot/awkscripts/changeforward.awk"
+#!/usr/bin/env awk
+
+{DEFAULT = 1}
+
+/^[[:alpha:]]+/ {
+    if ($0 == "config forwarding") {
+        flag = 1
+    }
+    else if (flag == 1) {
+        print "\toption src \'lan\'"
+        print "\toption dest \'WGZONE\'"
+        flag = 0
+    }
+    else {
+        flag = 0
+    }
+    print $0
+    DEFAULT = 0
+}
+
+DEFAULT {
+    if (flag == 0) {
+        print $0
+    }
+}
+
+EOF
+cat << 'EOF' > "${HOME}/.mullbot/awkscripts/addzone.awk"
+#!/usr/bin/env awk
+
+{DEFAULT = 1}
+
+/^[[:alpha:]]+/ {
+    if ($0 == "MULLBOTGOESHERE") {
+        flag = 1
+    }
+    else if (flag == 1) {
+        print "config zone"
+        print "\toption name \'WGZONE\'"
+        print "\toption input \'REJECT\'"
+        print "\toption output \'ACCEPT\'"
+        print "\toption forward \'REJECT\'"
+        print "\toption masq \'1\'"
+        print "\toption mtu_fix \'1\'"
+        print "\tlist network 'WGINTERFACE'"
+        print ""
+        flag = 0
+    }
+    else {
+        flag = 0
+    }
+    print $0
+    DEFAULT = 0
+}
+
+DEFAULT {
+    if (flag == 0) {
+        print $0
+    }
+}
+
+EOF
+}
+
+makewatchdog () {
+cat << 'EOF' > "${HOME}/.mullbot/wg-watchdog.sh"
+#!/bin/sh
+# ping mullvad dns that can only be reached via the VPN tunnel
+# if no contact, reboot!
+
+tries=0
+while [[ $tries -lt 5 ]]
+do
+        if /bin/ping -c 1 10.64.0.1
+        then
+                    echo "wg works"
+                    exit 0
+        fi
+        echo "wg fail"
+        tries=$((tries+1))
+done
+echo "wg failed 5 times - rebooting"
+reboot
+
+EOF
+pushfiletorouter "wg-watchdog.sh" "/root/wg-watchdog.sh"
+sleep 2
+sendcommandtorouter "/bin/chmod +x /root/wg-watchdog.sh"
+}
+
+makefirewallconfig () {
+sed 's/.*config forwarding.*/MULLBOTGOESHERE\n&/' "${HOME}/.mullbot/configs/firewall.bkp" > "${HOME}/.mullbot/configs/firewall.mullbot"
+echo "xxx" >> "${HOME}/.mullbot/configs/firewall.mullbot"
+awk -f "${HOME}/.mullbot/awkscripts/addzone.awk" "${HOME}/.mullbot/configs/firewall.mullbot" > "${HOME}/.mullbot/configs/firewall.working"
+mv "${HOME}/.mullbot/configs/firewall.working" "${HOME}/.mullbot/configs/firewall.mullbot"
+sed '/MULLBOTGOESHERE/d' "${HOME}/.mullbot/configs/firewall.mullbot" > "${HOME}/.mullbot/configs/firewall.working"
+mv "${HOME}/.mullbot/configs/firewall.working" "${HOME}/.mullbot/configs/firewall.mullbot"
+awk -f "${HOME}/.mullbot/awkscripts/changeforward.awk" "${HOME}/.mullbot/configs/firewall.mullbot" > "${HOME}/.mullbot/configs/firewall.working"
+mv "${HOME}/.mullbot/configs/firewall.working" "${HOME}/.mullbot/configs/firewall.mullbot"
+sed '/xxx/d' "${HOME}/.mullbot/configs/firewall.mullbot" > "${HOME}/.mullbot/configs/firewall.working"
+mv "${HOME}/.mullbot/configs/firewall.working" "${HOME}/.mullbot/configs/firewall.mullbot"
+}
+
+makedhcpconfig () {
+cp "${HOME}/.mullbot/configs/dhcp.bkp" "${HOME}/.mullbot/configs/dhcp.mullbot"
+echo "xxx" >> "${HOME}/.mullbot/configs/dhcp.mullbot"
+ALREADYGOTDNSMASQ="$(grep -c 'config dnsmasq' "${HOME}/.mullbot/configs/dhcp.mullbot")"
+if [[ $ALREADYGOTDNSMASQ == 1 ]]; then
+awk -f "${HOME}/.mullbot/awkscripts/changemasq.awk" "${HOME}/.mullbot/configs/dhcp.mullbot" > "${HOME}/.mullbot/configs/dhcp.working"
+mv "${HOME}/.mullbot/configs/dhcp.working" "${HOME}/.mullbot/configs/dhcp.mullbot"
+else
+cat << 'EOF' >> "${HOME}/.mullbot/configs/dhcp.mullbot"
+
+config dnsmasq
+    list server '10.64.0.1'
+
+EOF
+fi
+cat << 'EOF' >> "${HOME}/.mullbot/configs/dhcp.mullbot"
+
+config dhcp 'lan'
+    list dhcp_option '6,10.64.0.1'
+
+EOF
+sed '/xxx/d' "${HOME}/.mullbot/configs/dhcp.mullbot" > "${HOME}/.mullbot/configs/dhcp.working"
+mv "${HOME}/.mullbot/configs/dhcp.working" "${HOME}/.mullbot/configs/dhcp.mullbot"
+}
+
+makenetworkconfig () {
+cp "${HOME}/.mullbot/configs/network.bkp" "${HOME}/.mullbot/configs/network.mullbot"
+echo "xxx" >> "${HOME}/.mullbot/configs/network.mullbot"
+awk -f "${HOME}/.mullbot/awkscripts/changenetwork.awk" "${HOME}/.mullbot/configs/network.mullbot" > "${HOME}/.mullbot/configs/network.working"
+mv "${HOME}/.mullbot/configs/network.working" "${HOME}/.mullbot/configs/network.mullbot"
+MYPRIVATEKEY="$(cat "${HOME}/.mullbot/privatekey")"
+source "${HOME}/.mullbot/mullvadip"
+source "${HOME}/.mullbot/wgserverconfig"
+cat << EOF >> "${HOME}/.mullbot/configs/network.mullbot"
+
+config interface 'WGINTERFACE'
+    option proto 'wireguard'
+    option private_key '${MYPRIVATEKEY}'
+    list addresses '${MULLVADIP}'
+    option force_link '1'
+
+config wireguard_WGINTERFACE
+    option public_key '${WGSERVERPUBKEY}'
+    list allowed_ips '0.0.0.0/0'
+    option route_allowed_ips '1'
+    option endpoint_host '${WGSERVERIP}'
+    option endpoint_port '51820'
+
+EOF
+sed '/xxx/d' "${HOME}/.mullbot/configs/network.mullbot" > "${HOME}/.mullbot/configs/network.working"
+mv "${HOME}/.mullbot/configs/network.working" "${HOME}/.mullbot/configs/network.mullbot" 
+}
+
+togglevpn () {
+MULLVADCHECK="$(curl -s https://am.i.mullvad.net/connected |& grep -c 'You are connected' -)"
+if [[ "$MULLVADCHECK" == 1 ]]; then
+    FILETOPUSH="bkp"
+    else
+    FILETOPUSH="mullbot"
+fi
+pushfiletorouter "/configs/dhcp.${FILETOPUSH}" "/etc/config/dhcp"
+pushfiletorouter "/configs/firewall.${FILETOPUSH}" "/etc/config/firewall"
+pushfiletorouter "/configs/network.${FILETOPUSH}" "/etc/config/network"
+pushfiletorouter "/configs/crontab.${ILETOPUSH}" "/root/mycrontabfile"
+sendcommandtorouter "/usr/bin/crontab /root/mycrontabfile && /etc/init.d/cron restart"
+openwrtreboot nowait
+reconnecttorouter
+restartmullbot
+}
+
+wgkeygen () {
+sendcommandtorouter "/usr/bin/wg genkey | /usr/bin/tee privatekey | /usr/bin/wg pubkey > publickey"
+WGKEYS="privatekey publickey"
+for WGKEYFILE in $WGKEYS
+do
+fetchfilefromrouter "/root/${WGKEYFILE}" "${WGKEYFILE}"
+sleep 1
+sendcommandtorouter "rm -f /root/${WGKEYFILE}" 
+done
+}
+
+changewgserver () {
+getserverchoice
+makenetworkconfig
+pushfiletorouter "/configs/network.mullbot" "/etc/config/network"
+openwrtreboot
+}
+
+changewgkey () {
+wgkeygen
+getmullvadip
+makenetworkconfig
+pushfiletorouter "/configs/network.mullbot" "/etc/config/network"
+openwrtreboot
+}
+
+#setup functions
+getserverchoice () {
+type jq > /dev/null || NOJQINSTALLED="error"
+if [[ "$NOJQINSTALLED" == "error" ]]; then
+    echo "[-] Error: Please install jq and try again" >&2 && sleep 2 && return
+else
+clear
+echo 'Getting server list from Mullvad API...'
+curl -s https://api.mullvad.net/www/relays/wireguard/ > "${HOME}/.mullbot/apioutput"
+[ ! -f "${HOME}/.mullbot/getcountries" ] && echo 'map(.country_name) | unique' > "${HOME}/.mullbot/getcountries"
+#Read jq output line by line into array ${countries[@]}
+readarray -t countries < <(jq -f "${HOME}/.mullbot/getcountries" < "${HOME}/.mullbot/apioutput" | sed -r '/\[/d' | sed -r '/\]/d' | sed -r 's/\,//' | sed -r 's/'"""'/"'"/' )
+#Select a country
+echo "Please select a country"
+select CHOICE in "${countries[@]}"; do
+  [[ -n $CHOICE ]] || { echo "Invalid choice. Please try again." >&2; continue; }
+  break
+done
+read -r COUNTRY <<<"$CHOICE"
+echo 'map(select(.active)) | map(select(.country_name=='$COUNTRY')) | map(.city_name) | unique' > "${HOME}/.mullbot/getcities"
+readarray -t cities < <(jq -f "${HOME}/.mullbot/getcities" < "${HOME}/.mullbot/apioutput" | sed -r '/\[/d' | sed -r '/\]/d' | sed -r 's/\,//' | sed -r 's/'"""'/"'"/' )
+select CHOICE in "${cities[@]}"; do
+  [[ -n $CHOICE ]] || { echo "Invalid choice. Please try again." >&2; continue; }
+  break
+done
+read -r CITY <<<"$CHOICE"
+echo 'map(select(.active)) | map(select(.city_name=='$CITY')) | map(.ipv4_addr_in)' > "${HOME}/.mullbot/getips"
+read -r WGSERVERIP < <(jq -f "${HOME}/.mullbot/getips" < "${HOME}/.mullbot/apioutput" | sed 1d | sed -n 1p | sed s/'  "'// | sed s/'",'// )
+echo 'map(select(.active)) | map(select(.ipv4_addr_in=="'$WGSERVERIP'")) | map(.pubkey)' > "${HOME}/.mullbot/getpubkeys"
+read -r WGSERVERPUBKEY < <(jq -f "${HOME}/.mullbot/getpubkeys" < "${HOME}/.mullbot/apioutput" | sed 1d | sed -n 1p | sed s/'  "'// | sed s/'"'// )
+echo "Creating config..."
+sleep 3
+echo "WGSERVERIP='$WGSERVERIP'" > "${HOME}/.mullbot/wgserverconfig"
+echo "WGSERVERPUBKEY='$WGSERVERPUBKEY'" >> "${HOME}/.mullbot/wgserverconfig"
+clear
+rm -f "${HOME}/.mullbot/apioutput"
+fi
+}
+#router interaction
+fetchconfigfiles () {
+clear
+echo "Your router's current configuration will be used as the default state."
+echo "Please ensure that your router is NOT currently configured to Mullvad"
+echo "If your router is currently set up to use Mullvad PLEASE EXIT THIS SCRIPT."
+echo "Remove your VPN configurations from your router and run this script again."
+read -n 1 -r -s -p $"Press Ctrl + C to exit or any other key to continue... "
+clear
+FILESTOGET='network dhcp firewall'
+for CONFIGFILE in $FILESTOGET
+    do
+    if [[ ! -f "${HOME}/.mullbot/configs/$CONFIGFILE.bkp" ]]; then
+        echo "Fetching $CONFIGFILE"
+        fetchfilefromrouter "/etc/config/$CONFIGFILE" "configs/$CONFIGFILE.bkp"
+    fi
+done
+sendcommandtorouter "/usr/bin/crontab -l > mycrontabfile"
+sleep 1
+fetchfilefromrouter "/root/mycrontabfile" "${HOME}/.mullbot/configs/crontab.bkp"
+}
+
+fetchnewconfigfiles () {
+clear
+MULLVADSTATUS="$(curl -s https://am.i.mullvad.net/connected | grep -c 'You are connected' - )"
+if [[ "$MULLVADSTATUS" == 1 ]]; then
+    CONNECTIONTYPE="VPN"
+    else
+    CONNECTIONTYPE="non-VPN"
+fi
+echo "Fetching $CONNECTIONTYPE config files"
+FILESTOGET='network dhcp firewall'
+for CONFIGFILE in $FILESTOGET
+    do
+    if [[ "$MULLVADSTATUS" == 1 ]]; then
+        fetchfilefromrouter "/etc/config/$CONFIGFILE" "configs/$CONFIGFILE.mullbot"
+        else
+        fetchfilefromrouter "/etc/config/$CONFIGFILE" "configs/$CONFIGFILE.bkp"
+    fi
+done
+}
+
+checkmullbotdeps () {
+source "${HOME}/.mullbot/routersshconfig"
+if ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "test -e /usr/bin/curl" ; then
+    :
+    else
+    ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "opkg update && opkg install curl && exit" && DIDANINSTALL=1
+fi
+if ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "test -e /usr/bin/wg"; then
+    :
+    else
+    ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "opkg update && opkg install luci-proto-wireguard && exit" && DIDANINSTALL=1
+fi
+if [[ $DIDANINSTALL == 1 ]]; then
+    echo "Required dependencies have been installed. Rebooting router."
+    openwrtreboot
+fi
+}
+
+checkrouterip () {
+clear
+if [[ $OPENWRTROUTERIP != "192.168.99.1" ]]; then
+    echo "Mullvad recommends changing your router IP to 192.168.99.1 and Mullbot adheres to this recommendation."
+    read -r -p "Do you want to change your router IP? [Y/n] " RESPONSE
+    case "$RESPONSE" in
+        [nN]* )
+            echo "Exiting Mullbot..."
+            sleep 1
+            MULLBOTDONE=1
+            return
+            ;;
+        *)
+            changerouterip '"192.168.99.1"'
+            return
+            ;;
+    esac
+fi
+}
+#user interaction
+getmullvadaccount () {
+clear
+if [[ ! -f "${HOME}/.mullbot/mullvadaccount" ]]; then
+    echo "What is your Mullvad account number?"
+    echo ""
+    read -p "Mullvad account number (no spaces): " MULLVADACCOUNT
+    echo "MULLVADACCOUNT=$MULLVADACCOUNT" > "${HOME}/.mullbot/mullvadaccount"
+fi
+}
+
+makecrontab () {
+cp "${HOME}/.mullbot/configs/crontab.bkp" "${HOME}/.mullbot/configs/crontab.mullbot"
+echo '*/10 * * * * /root/wg-watchdog.sh' >> "${HOME}/.mullbot/configs/crontab.mullbot"
+}
+
+getmullvadip () {
+source "${HOME}/.mullbot/mullvadaccount"
+PUBLICKEY="$(cat "${HOME}/.mullbot/publickey")"
+sendcommandtorouter "/usr/bin/curl https://api.mullvad.net/wg/ -d account=$MULLVADACCOUNT --data-urlencode pubkey=$PUBLICKEY > mullvadip"
+sleep 5 & fetchfilefromrouter "/root/mullvadip" "mullvadip"
+MULLVADIP="$(cat "${HOME}/.mullbot/mullvadip" )"
+KEYLIMITCHECK="$(echo "$MULLVADIP" | grep -c "KEY-LIMIT-REACHED" -)"
+if [ "$KEYLIMITCHECK" != "0" ]; then
+    rm -f "${HOME}/.mullbot/mullvadip"
+    echo "You have reached your Mullvad key limit. Please delete a key and try again."
+    xdg-open "https://mullvad.net/en/account/#/ports" &> /dev/null
+    exit
+    else
+    MULLVADIP="$(echo "$MULLVADIP" | sed -e 's/\/.*//' -)"
+    MULLVADIP="'$MULLVADIP/32'"
+    echo "MULLVADIP=$MULLVADIP" > "${HOME}/.mullbot/mullvadip"
+fi
+}
+
+ #############################################################
+#                                                             #
+#                   M U L L B O T    M A I N                  #
+#                                                             #
+ #############################################################
+#check for required local files
+initmullbot () {
+clear
+source "${HOME}/.mullbot/mullbotconfig"
+[ "$WARNINGSHOWN" != "yes" ] && mullbotwarning
+checkmullbotdeps
+checkrouterip
+[ ! -d "${HOME}/.mullbot/configs" ] && mkdir "${HOME}/.mullbot/configs/" && fetchconfigfiles
+[ ! -d "${HOME}/.mullbot/awkscripts" ] && mkdir "${HOME}/.mullbot/awkscripts" && makeawkscripts
+[ ! -f "${HOME}/.mullbot/wg-watchdog.sh" ] && makewatchdog
+[ ! -f "${HOME}/.mullbot/mullvadaccount" ] && getmullvadaccount
+[ ! -f "${HOME}/.mullbot/privatekey" ] || [ ! -f "${HOME}/.mullbot/privatekey" ] && wgkeygen
+[ ! -f "${HOME}/.mullbot/mullvadip" ] && getmullvadip
+[ ! -f "${HOME}/.mullbot/wgserverconfig" ] && getserverchoice
+[ ! -f "${HOME}/.mullbot/configs/network.mullbot" ] &&  makenetworkconfig
+[ ! -f "${HOME}/.mullbot/configs/dhcp.mullbot" ] && makedhcpconfig
+[ ! -f "${HOME}/.mullbot/configs/firewall.mullbot" ] && makefirewallconfig
+[ ! -f "${HOME}/.mullbot/configs/crontab.mullbot" ] && makecrontab
+}
+
+mullbotmenu () {
+clear
+mullbotsplash
+mullvadstatusscreen
+PS3="Enter the  number corresponding to your choice: "
+options=(
+"Toggle VPN"
+"Select a Wireguard server"
+"Generate a new Wireguard Keypair"
+"Check installation"
+"Back to main menu"
+)
+select opt in "${options[@]}"
+do
+    case $REPLY in
+        1)
+            clear
+            togglevpn
+            return
+            ;;
+        2)
+            clear
+            changewgserver
+            return
+            ;;
+        3)
+            clear
+            changewgkey
+            return
+            ;;
+        4)
+            clear
+            initmullbot
+            return
+            ;;
+        5)
+            clear
+            MULLBOTDONE=1
+            return
+            ;;
+        *)
+            clear
+            echo "invalid option $REPLY"
+            sleep 1
+            return
+            ;;
+    esac
+done
+}
+
+splashscreen () {
+cat << SPLASH
+   ############################################################
+ #                                                            #
+#     #####                                                   #
+#    #    #                                          #        #
+#    #    #  # ####   ####  # ###   #  #  #  # ##    #        #
+#    #    #  ##   #  #   #  ##  #   #  #  #  ##  #   ###      #
+#    #    #  #    #  ####   #   #   #  #  #  #       #        #
+#    #    #  #    #  #      #   #   #  ## #  #       #    #   #
+#    #####   #####   ####   #   #   ##  ##   #       ####     #
+#            #                                                #
+#            #                                      Dropbear #
+############################################################
+SPLASH
+}
+
+interactivecommand () {
+read -p -r "Command to send: " ARBCOMMAND
+sendcommandtorouter "$ARBCOMMAND"
+}
+
+configmenusplash () {
+cat << CONFIGMENUSPLASH
+ #############################################################
+#                                                             #
+#                  C O N F I G U R A T I O N                  #
+#                                                             #
+ #############################################################
+CONFIGMENUSPLASH
+}
+
+#to do: make a test and change this to toggle
+turnoffsshpasswordauth () {
+source "${HOME}/.mullbot/routersshconfig"
+SSHSAFETYTEST="$(ssh -o PasswordAuthentication=no -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "exit" && echo "SAFE" || echo "UNSAFE")"
+if [[ "$SSHSAFETYTEST" == "UNSAFE" ]]; then
+    echo "Pubkey authentication not working. Password cannot be disabled without working pubkey uthetication."
+    else
+    sendcommandtorouter 'uci set dropbear.@dropbear[0].PasswordAuth="0"'
+    sendcommandtorouter 'uci set dropbear.@dropbear[0].RootPasswordAuth="0"'
+    sendcommandtorouter 'uci commit dropbear' 
+    sendcommandtorouter '/etc/init.d/dropbear restart'
+fi
+}
+
+turnonsshpasswordauth () {
+sendcommandtorouter 'uci set dropbear.@dropbear[0].PasswordAuth="1"'
+sendcommandtorouter 'uci set dropbear.@dropbear[0].RootPasswordAuth="1"'
+sendcommandtorouter 'uci commit dropbear'
+sendcommandtorouter '/etc/init.d/dropbear restart'
+}
+
+#to do: make a test and change this to toggle
+httpsredirecton () {
+source "${HOME}/.mullbot/routersshconfig"
+ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "uci set uhttpd.main.redirect_https=1 && uci commit uhttpd && service uhttpd reload"
+}
+
+httpsredirectoff () {
+source "${HOME}/.mullbot/routersshconfig"
+ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "uci set uhttpd.main.redirect_https=0 && uci commit uhttpd && service uhttpd reload"
+}
+
+autoluci () {
+clear
+cat << 'EOF'
+You can set ths script to enable LuCI automatically when started 
+and disable LuCI automatically when stopped.
+
+This allows access to the httpd service only when this script 
+is running or if you enable it manually over SSH.
+
+Additionally, a trap can be set, so that even if you exit the 
+script by closing the terminal rather than by selecting Quit 
+from the menu, LuCI will be disabled automatically for security.
+
+EOF
+read -n 1 -r -s -p $"Press any key to continue... "
+clear
+read -r -p "Would you like to enable LuCI automatically when this script starts? [Y/n] " RESPONSE
+case "$RESPONSE" in
+    [nN]* )
+        writemullbotconfig autostartluci no
+        ;;
+    *)
+        writemullbotconfig autostartluci yes
+        ;;
+esac
+clear
+read -r -p "Would you like to automatically disable LuCI when quitting this script? [Y/n]" RESPONSE
+case "$RESPONSE" in
+    [nN]* )
+        writemullbotconfig autokillluci no
+        ;;
+    *)
+        writemullbotconfig autokillluci yes
+        ;;
+esac
+read -r -p "Would you like to set a trap for LuCI? [Y/n] " RESPONSE
+case "$RESPONSE" in
+    [nN]* )
+        writemullbotconfig trapluci no
+        ;;
+    *)
+        writemullbotconfig trapluci yes
+        ;;
+esac
+clear
+}
+
+openwrtconfigmenu () {
+clear
+configmenusplash
+echo ""
+PS3="Enter the  number corresponding to your choice: "
+options=(
+"Specify router IP and port"
+"Get updated config from router"
+"Get complete config backup"
+"Turn ON password authetication for SSH"
+"Turn OFF password authetication for SSH"
+"Turn ON LuCI HTTPS redirect"
+"Turn OFF LuCI HTTPS redirect"
+"Set up AutoLuCI"
+"Change router IP"
+"(R)eturn to main menu"
+"(Q)uit"
+)
+select opt in "${options[@]}"
+do
+    case $REPLY in
+        1)
+            clear
+            makeroutersshconfig
+            return
+            ;;
+        2)
+            clear
+            fetchnewconfigfiles
+            return
+            ;;
+        3)
+            clear
+            getbackup
+            return
+            ;;
+        4)
+            clear
+            turnonsshpasswordauth
+            return
+            ;;
+        5)
+            clear
+            turnoffsshpasswordauth
+            return
+            ;;
+        6)
+            clear
+            httpsredirecton
+            return
+            ;;
+        7)
+            clear
+            httpsredirectoff
+            return
+            ;;
+        8)
+            clear
+            autoluci
+            return
+            ;;
+        9)
+            clear
+            getnewrouterip
+            return
+            ;;
+        [Rr]|10)
+            clear
+            CONFIGDONE=1
+            return
+            ;;
+        [Qq]|11)
+            clear
+            quitopenwrtscript
+            ;;
+        *)
+            clear
+            echo "invalid option $REPLY"
+            sleep 1
+            return
+            ;;
+    esac
+done
+}
+
+routerstatusscreen () {
+source "${HOME}/.mullbot/routersshconfig"
+OPENWRTIPLEN="$(echo ${#OPENWRTROUTERIP})"
+OPENWRTPORTLEN="$(echo ${#OPENWRTROUTERPORT})"
+let "STATUSLINE1SPACING = 63 - $OPENWRTIPLEN - $OPENWRTPORTLEN - 23"
+FIRSTSPACE="$(printf "%${STATUSLINE1SPACING}s")"
+echo "Router IP: $OPENWRTROUTERIP $FIRSTSPACE SSH Port: $OPENWRTROUTERPORT"
+LUCISTATUS="$(checkluci)"
+DROPBEARSTATUS="$(checkdropbear)"
+LUCISTATUSLEN="$(echo ${#LUCISTATUS})"
+DROPBEARSTATUSLEN="$(echo ${#DROPBEARSTATUS})"
+let "STATUSLINE2SPACING = 63 - $LUCISTATUSLEN - $DROPBEARSTATUSLEN - 36"
+SECONDSPACE="$(printf "%${STATUSLINE2SPACING}s")"
+echo "Dropbear is $DROPBEARSTATUS $SECONDSPACE LuCI web interface is $LUCISTATUS"
+echo '###############################################################'
+}
+
+launchluci () {
+source "${HOME}/.mullbot/routersshconfig"
+LUCISTATUS="$(checkluci)"
+if [[ "$LUCISTATUS" == "DISABLED" ]]; then
+    ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP" "/etc/init.d/uhttpd enable && /etc/init.d/uhttpd start && exit"
+fi
+xdg-open "https://$OPENWRTROUTERIP" &> /dev/null
+}
+
+checkluci (){
+source "${HOME}/.mullbot/routersshconfig"
+LUCIPORT80STATUS="$(checkportstatus "80")"
+LUCIPORT443STATUS="$(checkportstatus "443")"
+if [[ "$LUCIPORT80STATUS" == 0 ]] && [[ "$LUCIPORT443STATUS" == 0 ]]; then
+    LUCISTATUS=DISABLED
+    else
+    LUCISTATUS=ENABLED
+fi
+echo "$LUCISTATUS"
+}
+
+checkdropbear () {
+source "${HOME}/.mullbot/routersshconfig"
+ROUTERSSHSTATUS="$(nc -vz "$OPENWRTROUTERIP" "$OPENWRTROUTERPORT" 2>&1 |& grep -c 'succeeded' -)"
+if [[ "$ROUTERSSHSTATUS" == 1 ]]; then
+    DROPBEARSTATUS=ENABLED
+    else
+    DROPBEARSTATUS=DISABLED
+fi
+echo "$DROPBEARSTATUS"
+}
+
+disableluci () {
+sendcommandtorouter "/etc/init.d/uhttpd disable && /etc/init.d/uhttpd stop"
+}
+
+enableluci () {
+sendcommandtorouter "/etc/init.d/uhttpd enable && /etc/init.d/uhttpd start"
+}
+
+toggleluci () {
+LUCISTATUS="$(checkluci)"
+if [[ "$LUCISTATUS" == "DISABLED" ]]; then
+    enableluci
+    sleep 3
+    LUCISTATUS="$(checkluci)"
+    echo "LuCI web interface is $LUCISTATUS"
+    else
+    disableluci
+    sleep 3
+    LUCISTATUS="$(checkluci)"
+    echo "LuCI web interface is $LUCISTATUS"
+fi
+}
+
+quitopenwrtscript () {
+LUCISTATUS="$(checkluci)"
+source "${HOME}/.mullbot/mullbotconfig"
+[ "$LUCISTATUS" == "ENABLED" ] && [ "$AUTOKILLLUCI" == "yes" ] && disableluci
+exit
+}
+
+getnewrouterip () {
+clear
+echo "BE VERY CAREFUL!"
+echo "Please enter new router IP: "
+read NEWROUTERIP
+changerouterip "$NEWROUTERIP"
+}
+
+openwrtmenu () {
+PS3="Enter the  number corresponding to your choice: "
+options=(
+"(M)ullbot"
+"(C)onnect to router over SSH"
+"(S)end a command"
+"Toggle LuCI (W)eb interface"
+"(R)eboot router"
+"Toggle Mullvad Status (I)ndicator"
+"Configuration"
+'(Q)uit'
+)
+select opt in "${options[@]}"
+do
+    case $REPLY in
+        [Mm]|1)
+            MULLBOTDONE=0
+            initmullbot
+            while [[ "$MULLBOTDONE" == 0 ]]; do mullbotmenu ; done
+            return
+            ;;
+        [Cc]|2)
+            clear
+            sshconnecttorouter
+            return
+            ;;
+        [Ss]|3)
+            clear
+            interactivecommand
+            return
+            ;;
+        [Ww]|4)
+            clear
+            toggleluci
+            checkluci
+            return
+            ;;
+        [Rr]|5)
+            clear
+            openwrtreboot
+            return
+            ;;
+        [Ii]|6)  
+            [ "$INCLUDESTATUS" == "no" ] && writemullbotconfig includestatus yes
+            [ "$INCLUDESTATUS" == "yes" ] && writemullbotconfig includestatus no
+            return
+            ;;
+        7)
+            CONFIGDONE=0
+            while [[ "$CONFIGDONE" == 0 ]]; do openwrtconfigmenu ; done
+            return
+            ;;
+        [qQ]|8)
+            clear
+            quitopenwrtscript
+            ;;
+        *)
+            clear
+            echo "invalid option $REPLY"
+            sleep 1
+            return
+            ;;
+    esac
+done
+}
+
+exittrap () {
+source "${HOME}/.mullbot/routersshconfig"
+LUCISTATUS="$(checkluci)"
+[ "$EXITTRAP" == "yes" ] && [ "$LUCISTATUS" == "ENABLED" ] && ssh -p "$OPENWRTROUTERPORT" "root@$OPENWRTROUTERIP" "/etc/init.d/uhttpd disable && /etc/init.d/uhttpd stop & exit" > /dev/null
+}
+
+ #############################################################
+#                                                             #
+#                             R U N                           #
+#                                                             #
+ #############################################################
+trap exittrap EXIT
+[ ! -d "${HOME}/.mullbot" ] && mkdir "${HOME}/.mullbot" && welcometomullbot
+[ ! -f "${HOME}/.mullbot/routersshconfig" ] && makeroutersshconfig && getbackup 
+[ ! -f "${HOME}/.mullbot/mullbotconfig" ] && makebasicmullbotconfig
+source "${HOME}/.mullbot/mullbotconfig"
+LUCISTATUS="$(checkluci)"
+[ "$AUTOSTARTLUCI" == "yes" ] && [ "$LUCISTATUS" == "DISABLED" ] && enableluci && sleep 1
+while true
+do
+clear
+source ${HOME}/.mullbot/mullbotconfig
+splashscreen
+routerstatusscreen
+[ "$INCLUDESTATUS" == "yes" ] && mullvadstatusscreen
+openwrtmenu
+clear
+done
