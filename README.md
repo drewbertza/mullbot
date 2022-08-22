@@ -11,6 +11,16 @@ For a bit of added security, you can enable AutoLuCI, which will enable the uHTT
 
 For more info about securing your SSH setup with a Yubikey, see [DrDuh's guide](https://github.com/drduh/YubiKey-Guide).
 
+## Screenshots
+Simple interface:
+![Main menu](https://www.drewbert.co.za/mullbot/mullbot1.jpeg)
+
+Convenient VPN control and status indicators:
+![Mullbot menu](https://www.drewbert.co.za/mullbot/mullbot2.jpeg)
+
+Easy server selection:
+![Mullbot menu](https://www.drewbert.co.za/mullbot/mullbot3.jpeg)
+
 ### Notes
 Only tested with OpenWrt 21.02.3 and Bash 5.1.16
 
