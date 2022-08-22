@@ -108,7 +108,7 @@ case "$RESPONSE" in
         ;;
 esac
 }
-
+#not actually called, but might be needed
 restartmullbot () {
 x-terminal-emulator -e bash "$WHEREISMULLBOT"
 exit
