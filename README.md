@@ -13,12 +13,15 @@ For more info about securing your SSH setup with a Yubikey, see [DrDuh's guide](
 
 ## Screenshots
 Simple interface:
+
 ![Main menu](https://www.drewbert.co.za/mullbot/mullbot1.jpeg)
 
 Convenient VPN control and status indicators:
+
 ![Mullbot menu](https://www.drewbert.co.za/mullbot/mullbot2.jpeg)
 
 Easy server selection:
+
 ![Mullbot menu](https://www.drewbert.co.za/mullbot/mullbot3.jpeg)
 
 ### Notes
