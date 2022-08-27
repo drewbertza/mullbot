@@ -5,6 +5,7 @@ Mullbot requires [jq](https://stedolan.github.io/jq/), [OpenSSH](https://www.ope
 
 ## Control your Mullvad connection
 Mullbot incorporates a set of functions for controlling a [Wireguard](https://www.wireguard.com/) connection to [Mullvad VPN](https://mullvad.net/), and can quickly create a Wireguard connection according to [Mullvad's instructions](https://mullvad.net/en/help/running-wireguard-router/). It also enables quick switching between servers.
+It now includes filters for selecting only Mullvad-owned servers, and simple ping tests to determine the best server to use.
 
 ## AutoLuCI
 For a bit of added security, you can enable AutoLuCI, which will enable the uHTTPd service on the router when the script starts, and disable it when the script exits, with an optional exit trap. Commands are issued via SSH, so if you set up SSH authentication with a key and disable password authetication, this can serve as a roll-your-own 2FA option for your router's web interface.
@@ -48,5 +49,3 @@ I made script to learn bash, git, and awk, and to get to grips with using OpenWr
 
 I figured this would be a good way to learn, and make something that I'd find useful. Maybe you will too.
 While I've tried to test it, it isn't guaranteed to work.
-
--- [Drewbert](https://www.drewbert.co.za/mullbot/)
