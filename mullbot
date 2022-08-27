@@ -1,10 +1,5 @@
 #!/bin/bash
-#
-#  Mullbot
-#  https://www.drewbert.co.za/mullbot
-#
 #All files will be saved in ~/.mullbot
-#
 if [[ $EUID -eq 0 ]]; then
     echo "This script must NOT be run as root" 1>&2
     sleep 1
@@ -108,7 +103,7 @@ case "$RESPONSE" in
         ;;
 esac
 }
-#not actually called, but might be needed
+
 restartmullbot () {
 x-terminal-emulator -e bash "$WHEREISMULLBOT"
 exit
@@ -521,31 +516,55 @@ openwrtreboot
 #setup functions
 getserverchoice () {
 type jq > /dev/null || NOJQINSTALLED="error"
-if [[ "$NOJQINSTALLED" == "error" ]]; then
-    echo "[-] Error: Please install jq and try again" >&2 && sleep 2 && return
-else
+[ "$NOJQINSTALLED" == "error" ] && echo "Error: Please install jq and try again" >&2 && sleep 2 && return
 clear
 echo 'Getting server list from Mullvad API...'
 curl -s https://api.mullvad.net/www/relays/wireguard/ > "${HOME}/.mullbot/apioutput"
-[ ! -f "${HOME}/.mullbot/getcountries" ] && echo 'map(.country_name) | unique' > "${HOME}/.mullbot/getcountries"
-#Read jq output line by line into array ${countries[@]}
-readarray -t countries < <(jq -f "${HOME}/.mullbot/getcountries" < "${HOME}/.mullbot/apioutput" | sed -r '/\[/d' | sed -r '/\]/d' | sed -r 's/\,//' | sed -r 's/'"""'/"'"/' )
-#Select a country
-echo "Please select a country"
-select CHOICE in "${countries[@]}"; do
-  [[ -n $CHOICE ]] || { echo "Invalid choice. Please try again." >&2; continue; }
-  break
+source "${HOME}/.mullbot/wgserverfilter"
+if [[ "$OWNERFILTER" == 1 ]]; then
+    echo 'map(select(.active)) | map(select(.owned))' > "${HOME}/.mullbot/getactiveservers"
+    else
+    echo 'map(select(.active))' > "${HOME}/.mullbot/getactiveservers"
+fi
+jq -f "${HOME}/.mullbot/getactiveservers" < "${HOME}/.mullbot/apioutput" > "${HOME}/.mullbot/activeservers"
+if [[ "$SPEEDFILTER" != "ALL" ]]; then
+    echo 'map(.country_name) | unique' > "${HOME}/.mullbot/getcountries"
+    readarray -t COUNTRIES < <(jq -f "${HOME}/.mullbot/getcountries" < "${HOME}/.mullbot/activeservers" | sed -r '/\[/d' | sed -r '/\]/d' | sed -r 's/\,//' | sed -r 's/'"""'/"'"/' )
+    clear
+    echo "Please select a country"
+    select CHOICE in "${COUNTRIES[@]}"; do
+    [[ -n $CHOICE ]] || { echo "Invalid choice. Please try again." >&2; continue; }
+    break
+    done
+    read -r COUNTRY <<<"$CHOICE"
+    if [[ "$SPEEDFILTER" != "COUNTRY" ]]; then
+        echo 'map(select(.country_name=='$COUNTRY')) | map(.city_name) | unique' > "${HOME}/.mullbot/getcities"
+        readarray -t CITIES < <(jq -f "${HOME}/.mullbot/getcities" < "${HOME}/.mullbot/activeservers" | sed -r '/\[/d' | sed -r '/\]/d' | sed -r 's/\,//' | sed -r 's/'"""'/"'"/' )
+        clear
+        echo "Please select a city"
+        select CHOICE in "${CITIES[@]}"; do
+        [[ -n $CHOICE ]] || { echo "Invalid choice. Please try again." >&2; continue; }
+        break
+        done 
+        read -r CITY <<<"$CHOICE"
+        echo 'map(select(.city_name=='$CITY')) | map(.ipv4_addr_in)' > "${HOME}/.mullbot/getips"
+        else
+        echo 'map(select(.country_name=='$COUNTRY')) | map(.ipv4_addr_in)' > "${HOME}/.mullbot/getips" 
+    fi
+    else
+    echo 'map(.ipv4_addr_in)' > "${HOME}/.mullbot/getips"
+fi
+readarray -t SERVERIPS < <(jq -f "${HOME}/.mullbot/getips" < "${HOME}/.mullbot/activeservers" | sed -r '/\[/d' | sed -r '/\]/d' | sed s/'  "'// | sed s/'",'// | sed s/'"'// )
+clear
+echo 'Finding best server...'
+[ -f "${HOME}/.mullbot/ipspeeds" ] && rm -f "${HOME}/.mullbot/ipspeeds" && touch "${HOME}/.mullbot/ipspeeds"
+[ -f "${HOME}/.mullbot/sortedips" ] && rm -f "${HOME}/.mullbot/sortedips" && touch "${HOME}/.mullbot/sortedips"
+for IPTOTEST in "${SERVERIPS[@]}" ; do
+PINGSPEED="$(ping -q -c 2 -W 1 "$IPTOTEST" | grep "rtt" | sed -e s/'.*\='// | tr '/' "\n" | sed -n 2p)"
+echo "$PINGSPEED $IPTOTEST" >> "${HOME}/.mullbot/ipspeeds"
 done
-read -r COUNTRY <<<"$CHOICE"
-echo 'map(select(.active)) | map(select(.country_name=='$COUNTRY')) | map(.city_name) | unique' > "${HOME}/.mullbot/getcities"
-readarray -t cities < <(jq -f "${HOME}/.mullbot/getcities" < "${HOME}/.mullbot/apioutput" | sed -r '/\[/d' | sed -r '/\]/d' | sed -r 's/\,//' | sed -r 's/'"""'/"'"/' )
-select CHOICE in "${cities[@]}"; do
-  [[ -n $CHOICE ]] || { echo "Invalid choice. Please try again." >&2; continue; }
-  break
-done
-read -r CITY <<<"$CHOICE"
-echo 'map(select(.active)) | map(select(.city_name=='$CITY')) | map(.ipv4_addr_in)' > "${HOME}/.mullbot/getips"
-read -r WGSERVERIP < <(jq -f "${HOME}/.mullbot/getips" < "${HOME}/.mullbot/apioutput" | sed 1d | sed -n 1p | sed s/'  "'// | sed s/'",'// )
+sort -n "${HOME}/.mullbot/ipspeeds" > "${HOME}/.mullbot/sortedips"
+WGSERVERIP="$( sed -n 1p  < "${HOME}/.mullbot/sortedips" | sed -e s/'.* '// )"
 echo 'map(select(.active)) | map(select(.ipv4_addr_in=="'$WGSERVERIP'")) | map(.pubkey)' > "${HOME}/.mullbot/getpubkeys"
 read -r WGSERVERPUBKEY < <(jq -f "${HOME}/.mullbot/getpubkeys" < "${HOME}/.mullbot/apioutput" | sed 1d | sed -n 1p | sed s/'  "'// | sed s/'"'// )
 echo "Creating config..."
@@ -554,7 +573,59 @@ echo "WGSERVERIP='$WGSERVERIP'" > "${HOME}/.mullbot/wgserverconfig"
 echo "WGSERVERPUBKEY='$WGSERVERPUBKEY'" >> "${HOME}/.mullbot/wgserverconfig"
 clear
 rm -f "${HOME}/.mullbot/apioutput"
+}
+
+serverfiltersetup () {
+[ ! -f "wgserverfilter" ] && touch "wgserverfilter"
+source "wgserverfilter"
+if [[ "$OWNERFILTER" == 1 ]]; then
+    echo "Only Mullvad-owned servers will be used"
 fi
+if [[ "$SPEEDFILTER" == "COUNTRY" ]]; then
+    echo "The fastest server in your chosen country will be used"
+fi
+if [[ "$SPEEDFILTER" == "ALL" ]]; then
+    echo "The fastest server available will be used"
+    echo "WARNING: Testing all available servers can take a while!"
+fi
+echo ""
+PS3="Enter the number corresponding to your choice:"
+options=(
+"Use only Mullvad-owned servers"
+"Use the fastest server out of all available servers"
+"Use the fastest server in chosen country"
+"Clear filters"
+"Return to Mullbot menu"
+)
+select opt in "${options[@]}"
+do
+    case $REPLY in
+        1)
+            echo OWNERFILTER=1 > "wgserverfilter"
+            echo SPEEDFILTER="$SPEEDFILTER" >> "wgserverfilter"
+            return
+            ;;
+        2)
+            echo OWNERFILTER="$OWNERFILTER" > "wgserverfilter"
+            echo SPEEDFILTER=ALL >> "wgserverfilter"
+            return
+            ;;
+        3)
+            echo OWNERFILTER="$OWNERFILTER" > "wgserverfilter"
+            echo SPEEDFILTER=COUNTRY >> "wgserverfilter"
+            return
+            ;;
+        4)
+            echo OWNERFILTER=0 > "wgserverfilter"
+            echo SPEEDFILTER=0 >> "wgserverfilter"
+            return
+            ;;
+        5)
+            FILTERCONFIG=1
+            return
+            ;;
+    esac
+done
 }
 #router interaction
 fetchconfigfiles () {
@@ -699,12 +770,13 @@ mullbotmenu () {
 clear
 mullbotsplash
 mullvadstatusscreen
-PS3="Enter the  number corresponding to your choice: "
+PS3="Enter the number corresponding to your choice: "
 options=(
 "Toggle VPN"
 "Select a Wireguard server"
 "Generate a new Wireguard Keypair"
 "Check installation"
+"Filter servers"
 "Back to main menu"
 )
 select opt in "${options[@]}"
@@ -728,9 +800,18 @@ do
         4)
             clear
             initmullbot
+            echo "Installation check complete" && sleep 1
             return
             ;;
         5)
+            FILTERCONFIG=0
+            while [[ "$FILTERCONFIG" == 0 ]]; do
+            clear
+            serverfiltersetup
+            done
+            return
+            ;;
+        6)
             clear
             MULLBOTDONE=1
             return
@@ -860,7 +941,7 @@ openwrtconfigmenu () {
 clear
 configmenusplash
 echo ""
-PS3="Enter the  number corresponding to your choice: "
+PS3="Enter the number corresponding to your choice: "
 options=(
 "Specify router IP and port"
 "Get updated config from router"
@@ -1029,7 +1110,7 @@ changerouterip "$NEWROUTERIP"
 }
 
 openwrtmenu () {
-PS3="Enter the  number corresponding to your choice: "
+PS3="Enter the number corresponding to your choice: "
 options=(
 "(M)ullbot"
 "(C)onnect to router over SSH"
