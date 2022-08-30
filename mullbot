@@ -116,9 +116,13 @@ ssh -p "$OPENWRTROUTERPORT" root@"$OPENWRTROUTERIP"
 }
 
 sendcommandtorouter () {
+if [[ "$1" == "silent" ]]; then
+: & ssh -p "$OPENWRTROUTERPORT" "root@$OPENWRTROUTERIP" "$2 & exit" > /dev/null
+else
 echo "Working..."
 source "${HOME}/.mullbot/routersshconfig"
 ssh -p "$OPENWRTROUTERPORT" "root@$OPENWRTROUTERIP" "$1 & exit" > /dev/null
+fi
 }
 
 fetchfilefromrouter () {
@@ -157,8 +161,8 @@ if [[ "$1" != "quick" ]] || [[ "$2" != "quick" ]]; then
     done
     clear
 fi
-sendcommandtorouter 'reboot'
 if [[ "$1" != "nowait" ]] || [[ "$2" != "nowait" ]]; then
+    sendcommandtorouter 'reboot'
     sleep 3
     ROUTERSTATUS=0
     while [[ "$ROUTERSTATUS" == 0 ]]; do
@@ -168,6 +172,8 @@ if [[ "$1" != "nowait" ]] || [[ "$2" != "nowait" ]]; then
     echo "And we're back"
     sleep 1
     clear
+    else
+    sendcommandtorouter silent 'reboot'
 fi
 }
 
@@ -483,8 +489,8 @@ pushfiletorouter "/configs/network.${FILETOPUSH}" "/etc/config/network"
 pushfiletorouter "/configs/crontab.${FILETOPUSH}" "/root/mycrontabfile"
 sendcommandtorouter "/usr/bin/crontab /root/mycrontabfile && /etc/init.d/cron restart"
 openwrtreboot nowait
-reconnecttorouter
-restartmullbot
+#reconnecttorouter
+#restartmullbot
 }
 
 wgkeygen () {
@@ -501,16 +507,12 @@ done
 changewgserver () {
 getserverchoice
 makenetworkconfig
-pushfiletorouter "/configs/network.mullbot" "/etc/config/network"
-openwrtreboot
 }
 
 changewgkey () {
 wgkeygen
 getmullvadip
 makenetworkconfig
-pushfiletorouter "/configs/network.mullbot" "/etc/config/network"
-openwrtreboot
 }
 
 #setup functions
@@ -941,6 +943,23 @@ esac
 clear
 }
 
+getupdatedconfigs () {
+VPNSTATUS="$(curl -s https://am.i.mullvad.net/connected | grep -c 'You are connected' -)"
+if [[ "$VPNSTATUS" == 1 ]]; then
+    FILETYPETOGET='.mullbot'
+    echo 'Fetching updated VPN configuration...'
+    else
+    FILETYPETOGET='.bkp'
+    echo 'Fetching updated default configuration...'
+fi
+FILESTOGET='network dhcp firewall'
+for CONFIGFILE in $FILESTOGET
+    do
+    fetchfilefromrouter "/etc/config/$CONFIGFILE" "configs/${CONFIGFILE}${FILETYPETOGET}"
+done
+echo "Done"
+}
+
 openwrtconfigmenu () {
 clear
 configmenusplash
@@ -1007,12 +1026,17 @@ do
             getnewrouterip
             return
             ;;
-        [Rr]|10)
+        10)
+            clear
+            getupdatedconfigs
+            return
+            ;;
+        [Rr]|11)
             clear
             CONFIGDONE=1
             return
             ;;
-        [Qq]|11)
+        [Qq]|12)
             clear
             quitopenwrtscript
             ;;
@@ -1190,6 +1214,9 @@ LUCISTATUS="$(checkluci)"
 #                             R U N                           #
 #                                                             #
  #############################################################
+[ "$1" == lucion ] && enableluci && EXITTRAP=no && echo "LuCI web interface enabled" && exit
+[ "$1" == lucioff ] && disableluci && EXITTRAP=no && echo "LuCI web interface disabled" && exit
+[ "$1" == vpn ] && AUTOSTARTLUCI=no && togglevpn && exit
 trap exittrap EXIT
 [ ! -d "${HOME}/.mullbot" ] && mkdir "${HOME}/.mullbot" && welcometomullbot
 [ ! -f "${HOME}/.mullbot/routersshconfig" ] && makeroutersshconfig && getbackup 
