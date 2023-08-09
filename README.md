@@ -19,11 +19,11 @@ Simple interface:
 
 Convenient VPN control and status indicators:
 
-![Mullbot menu](https://github.com/drewbertza/mullbot/blob/main/mullbot2.jpeg)
+![Mullbot Menu](https://github.com/drewbertza/mullbot/blob/main/mullbot2.jpeg)
 
 Easy server selection:
 
-![Mullbot server](https://github.com/drewbertza/mullbot/blob/main/mullbot3.jpeg)
+![Mullbot Servers](https://github.com/drewbertza/mullbot/blob/main/mullbot3.jpeg)
 
 ### Notes
 Only tested with OpenWrt 21.02.3 and Bash 5.1.16
