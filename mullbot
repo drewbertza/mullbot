@@ -1217,6 +1217,7 @@ LUCISTATUS="$(checkluci)"
 [ "$1" == lucion ] && enableluci && EXITTRAP=no && echo "LuCI web interface enabled" && exit
 [ "$1" == lucioff ] && disableluci && EXITTRAP=no && echo "LuCI web interface disabled" && exit
 [ "$1" == vpn ] && AUTOSTARTLUCI=no && togglevpn && exit
+[ "$1" == select ] && AUTOSTARTLUCI=no && getserverchoice && exit
 trap exittrap EXIT
 [ ! -d "${HOME}/.mullbot" ] && mkdir "${HOME}/.mullbot" && welcometomullbot
 [ ! -f "${HOME}/.mullbot/routersshconfig" ] && makeroutersshconfig && getbackup 
