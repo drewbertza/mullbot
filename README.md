@@ -15,7 +15,7 @@ For more info about securing your SSH setup with a Yubikey, see [DrDuh's guide](
 ## Screenshots
 Simple interface:
 
-![Main menu](https://www.drewbert.co.za/mullbot/mullbot1.jpeg)
+![[mullbot1.jpeg]]
 
 Convenient VPN control and status indicators:
 
